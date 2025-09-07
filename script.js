@@ -55,8 +55,15 @@ class Chatbot {
         ];
         
         // Cấu hình cho deployment (Vercel hoặc local)
-        this.apiUrl = window.location.hostname === 'localhost' 
-            ? 'http://localhost:5000/chat'  // Local development
+        const hostname = window.location.hostname;
+        const port = window.location.port;
+        const isLocalEnv = (
+            hostname === 'localhost' ||
+            hostname === '127.0.0.1' ||
+            port === '5500'
+        );
+        this.apiUrl = isLocalEnv
+            ? 'http://localhost:5000/chat'  // Local development (Node/Flask server)
             : '/chat';  // Production (Vercel)
         
         this.init();
@@ -239,10 +246,12 @@ document.addEventListener('DOMContentLoaded', () => {
     };
     window.testServer = async () => {
         console.log('🧪 Testing server connection...');
-        const isLocal = window.location.hostname === 'localhost';
+        const hostname = window.location.hostname;
+        const port = window.location.port;
+        const isLocal = (hostname === 'localhost' || hostname === '127.0.0.1' || port === '5500');
         
         const healthUrls = isLocal 
-            ? ['http://localhost:5000/health']
+            ? ['http://localhost:5000/health', 'http://127.0.0.1:5000/health']
             : ['/health', '/api/health'];
         
         for (const healthUrl of healthUrls) {
@@ -262,7 +271,9 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Hiển thị tin nhắn chào mừng
     setTimeout(() => {
-        const isLocal = window.location.hostname === 'localhost';
+        const hostname = window.location.hostname;
+        const port = window.location.port;
+        const isLocal = (hostname === 'localhost' || hostname === '127.0.0.1' || port === '5500');
         const welcomeMessage = isLocal 
             ? "Chào mừng bạn đến với MindTek AI Assistant! 🤖\n\n" +
               "🔒 API key được bảo mật trong server backend.\n" +
@@ -272,7 +283,6 @@ document.addEventListener('DOMContentLoaded', () => {
               "3. Bắt đầu trò chuyện!\n\n" +
               "Hãy bắt đầu bằng cách cho tôi biết bạn làm việc trong lĩnh vực gì? 😊"
             : "Chào mừng bạn đến với MindTek AI Assistant! 🤖\n\n" +
-              "🚀 Production Mode - API key được bảo mật trên Vercel\n" +
               "💡 Tôi đã sẵn sàng tư vấn dịch vụ AI cho doanh nghiệp của bạn!\n\n" +
               "Hãy bắt đầu bằng cách cho tôi biết bạn làm việc trong lĩnh vực gì? 😊";
         window.chatbot.addMessage(welcomeMessage, 'bot');
