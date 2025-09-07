@@ -5,12 +5,67 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const OpenAI = require('openai');
+const fs = require('fs');
+const path = require('path');
 
 const app = express();
 
 // Middleware setup
 app.use(cors()); // Cho phép CORS cho frontend
 app.use(express.json()); // Parse JSON bodies
+
+// Conversations directory setup
+const conversationsDir = path.join(process.cwd(), 'conversations');
+if (!fs.existsSync(conversationsDir)) {
+    fs.mkdirSync(conversationsDir, { recursive: true });
+}
+
+// Helpers
+function generateConversationId() {
+    const stamp = new Date().toISOString().replace(/[-:.TZ]/g, '');
+    return `chat_${stamp}`;
+}
+
+async function saveConversation(messages, filename, latestAssistantReply) {
+    const now = new Date();
+    const basePath = path.join(conversationsDir, filename);
+    const jsonPath = `${basePath}.json`;
+    const txtPath = `${basePath}.txt`;
+
+    // --- JSON: append-style persistence ---
+    let mergedMessages = [];
+    if (fs.existsSync(jsonPath)) {
+        try {
+            const existing = JSON.parse(await fs.promises.readFile(jsonPath, 'utf8'));
+            const existingMessages = Array.isArray(existing.messages) ? existing.messages : [];
+            // Append only the suffix not already stored (avoid duplicates)
+            const startIdx = existingMessages.length;
+            mergedMessages = existingMessages.concat(messages.slice(startIdx));
+        } catch (_) {
+            mergedMessages = messages;
+        }
+    } else {
+        mergedMessages = messages;
+    }
+
+    const jsonData = { messages: mergedMessages, updated_at: now.toISOString() };
+    await fs.promises.writeFile(jsonPath, JSON.stringify(jsonData, null, 2), 'utf8');
+
+    // --- TXT: append latest turn only (append mode) ---
+    if (!fs.existsSync(txtPath)) {
+        const header = `Conversation started: ${now.toISOString().replace('T', ' ').slice(0, 19)}\n\n`;
+        await fs.promises.writeFile(txtPath, header, 'utf8');
+    }
+
+    // Find the latest user message and append pair (user + assistant)
+    const lastUser = [...messages].reverse().find(m => m.role === 'user');
+    if (lastUser) {
+        const pairText = `User: ${lastUser.content}\nAssistant: ${latestAssistantReply || ''}\n\n`;
+        await fs.promises.appendFile(txtPath, pairText, 'utf8');
+    }
+
+    return { jsonPath, txtPath };
+}
 
 // Lấy API key từ biến môi trường
 const apiKey = process.env.OPENAI_API_KEYTST || process.env.OPENAI_API_KEY || process.env.OPENAI_KEY;
@@ -37,11 +92,14 @@ const openai = new OpenAI({
     apiKey: apiKey
 });
 
+// In-memory store for per-session conversation accumulation
+const conversationStore = new Map(); // Map<conversationId, messages[]>
+
 // Chat endpoint - POST /chat
 app.post('/chat', async (req, res) => {
     try {
         // Lấy dữ liệu từ frontend
-        const { messages } = req.body;
+        const { messages, conversationId: incomingConversationId } = req.body;
         
         if (!messages || !Array.isArray(messages)) {
             return res.status(400).json({
@@ -50,11 +108,12 @@ app.post('/chat', async (req, res) => {
             });
         }
         
-        console.log(` Received request with ${messages.length} messages`);
+        const conversationId = incomingConversationId || generateConversationId();
+        console.log(` Received request with ${messages.length} messages (conversationId: ${conversationId})`);
         
         // Gọi OpenAI API
         const response = await openai.chat.completions.create({
-            model: 'gpt-3.5-turbo',
+            model: 'gpt-4.1-mini',
             messages: messages,
             temperature: 0.7,
             max_tokens: 200
@@ -63,9 +122,30 @@ app.post('/chat', async (req, res) => {
         const reply = response.choices[0].message.content;
         console.log(` OpenAI response: ${reply.substring(0, 50)}...`);
         
+        // Accumulate full conversation in memory and persist
+        const lastUser = [...messages].reverse().find(m => m.role === 'user');
+        let currentLog = conversationStore.get(conversationId) || [];
+        if (currentLog.length === 0) {
+            // Seed with provided messages (usually contains system + first user)
+            currentLog = messages.filter(m => m.role === 'system' || m.role === 'user');
+        } else if (lastUser) {
+            currentLog.push({ role: 'user', content: lastUser.content });
+        }
+        if (reply) {
+            currentLog.push({ role: 'assistant', content: reply });
+        }
+        conversationStore.set(conversationId, currentLog);
+
+        try {
+            await saveConversation(currentLog, conversationId, reply);
+        } catch (saveErr) {
+            console.warn(' Could not save conversation:', saveErr.message);
+        }
+
         res.json({
             success: true,
-            message: reply
+            message: reply,
+            conversationId
         });
         
     } catch (error) {

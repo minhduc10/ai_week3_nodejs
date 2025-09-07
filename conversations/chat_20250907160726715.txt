@@ -1,0 +1,5 @@
+Conversation started: 2025-09-07 16:07:27
+
+User: chào bạn
+Assistant: Chào bạn! Bạn đang làm việc trong ngành nào vậy?
+

@@ -65,6 +65,9 @@ class Chatbot {
         this.apiUrl = isLocalEnv
             ? 'http://localhost:5000/chat'  // Local development (Node/Flask server)
             : '/chat';  // Production (Vercel)
+
+        // Khởi tạo bộ nhớ cục bộ cho lịch sử hội thoại (chỉ cho 1 phiên/tab)
+        this.persistKey = 'chat_history';
         
         this.init();
     }
@@ -77,6 +80,22 @@ class Chatbot {
             }
         });
         
+        // Khởi tạo phiên: nếu chưa có conversationId thì tạo mới, có rồi thì dùng lại
+        try {
+            this.conversationId = sessionStorage.getItem('conversation_id') || null;
+        } catch (_) {
+            this.conversationId = null;
+        }
+
+        // Khôi phục lịch sử của phiên hiện tại để hiển thị trên dialog
+        const cached = this.loadMessagesFromStorage();
+        if (Array.isArray(cached) && cached.length > 0) {
+            for (const m of cached) {
+                this.conversationHistory.push({ role: m.role, content: m.content });
+            }
+            this.renderFromHistory();
+        }
+
         this.messageInput.focus();
     }
     
@@ -89,6 +108,8 @@ class Chatbot {
         
         // Thêm tin nhắn người dùng vào lịch sử hội thoại
         this.conversationHistory.push({"role": "user", "content": message});
+        // Lưu ngay vào localStorage (tạm thời) và sẽ cập nhật sau khi có phản hồi
+        this.saveMessagesToStorage();
         
         this.showTypingIndicator();
         
@@ -99,6 +120,9 @@ class Chatbot {
             
             // Thêm phản hồi của AI vào lịch sử hội thoại
             this.conversationHistory.push({"role": "assistant", "content": response});
+            this.saveMessagesToStorage();
+            // Đảm bảo giao diện hiển thị đầy đủ lịch sử 20 tin gần nhất
+            this.renderFromHistory();
         } catch (error) {
             this.hideTypingIndicator();
             const errorMessage = "Xin lỗi, có lỗi xảy ra. Vui lòng thử lại sau.";
@@ -124,6 +148,47 @@ class Chatbot {
         this.chatMessages.insertBefore(messageDiv, this.typingIndicator);
         this.scrollToBottom();
     }
+
+    // Render lại UI từ conversationHistory (giữ tối đa 20 tin, bỏ system)
+    renderFromHistory() {
+        // Xóa các bong bóng tin nhắn hiện có (không xóa typing-indicator)
+        const existing = this.chatMessages.querySelectorAll('.message');
+        existing.forEach(node => node.remove());
+
+        const recent = this.conversationHistory
+            .filter(m => m.role !== 'system')
+            .slice(-20);
+
+        for (const msg of recent) {
+            const sender = msg.role === 'assistant' ? 'bot' : 'user';
+            this.addMessage(msg.content, sender);
+        }
+    }
+
+    // Lưu tối đa 20 tin nhắn gần nhất vào localStorage
+    saveMessagesToStorage() {
+        try {
+            const recent = this.conversationHistory
+                .filter(m => m.role !== 'system')
+                .slice(-20); // chỉ giữ 20 tin gần nhất
+            localStorage.setItem(this.persistKey, JSON.stringify(recent));
+        } catch (e) {
+            console.warn('Không thể lưu lịch sử hội thoại:', e.message);
+        }
+    }
+
+    // Tải lịch sử hội thoại từ localStorage
+    loadMessagesFromStorage() {
+        try {
+            const raw = localStorage.getItem(this.persistKey);
+            if (!raw) return [];
+            const parsed = JSON.parse(raw);
+            if (!Array.isArray(parsed)) return [];
+            return parsed.slice(-20);
+        } catch (_) {
+            return [];
+        }
+    }
     
     async generateResponse() {
         console.log('🔍 Đang gửi request tới local server...');
@@ -131,7 +196,8 @@ class Chatbot {
 
         try {
             const requestBody = {
-                messages: this.conversationHistory
+                messages: this.conversationHistory,
+                conversationId: this.conversationId || null
             };
             
             console.log('Request body:', requestBody);
@@ -155,6 +221,12 @@ class Chatbot {
             const data = await response.json();
             console.log('✅ Server Response successful:', data);
             
+            // Lưu conversationId trong bộ nhớ phiên (sessionStorage) để giữ nguyên trong phiên hiện tại
+            if (data.conversationId) {
+                this.conversationId = data.conversationId;
+                try { sessionStorage.setItem('conversation_id', this.conversationId); } catch (_) {}
+            }
+
             if (data.success) {
                 return data.message;
             } else {
@@ -172,7 +244,11 @@ class Chatbot {
                 errorMessage = "🚨 Lỗi server. Vui lòng kiểm tra API key trong file .env";
             }
             
-            return errorMessage + `\n\n🔧 Chi tiết lỗi: ${error.message}`;
+            // Lưu lỗi như một tin nhắn bot để người dùng thấy trong UI
+            const errorText = errorMessage + `\n\n🔧 Chi tiết lỗi: ${error.message}`;
+            this.conversationHistory.push({ role: 'assistant', content: errorText });
+            this.saveMessagesToStorage();
+            return errorText;
         }
     }
     
@@ -269,15 +345,18 @@ document.addEventListener('DOMContentLoaded', () => {
         return 'All health endpoints failed';
     };
     
-    // Hiển thị tin nhắn chào mừng
+    // Hiển thị tin nhắn chào mừng CHỈ khi chưa có tin nhắn nào trong phiên hiện tại
     setTimeout(() => {
+        const hasHistory = window.chatbot.conversationHistory.some(m => m.role !== 'system');
+        const hasRenderedMessages = window.chatbot.chatMessages.querySelectorAll('.message.user, .message.bot').length > 0;
+        if (hasHistory || hasRenderedMessages) return;
+
         const hostname = window.location.hostname;
         const port = window.location.port;
         const isLocal = (hostname === 'localhost' || hostname === '127.0.0.1' || port === '5500');
         const welcomeMessage = isLocal 
-            ? "Chào mừng bạn đến với MindTek AI Assistant! 🤖\n\n" +
-              "🔒 API key được bảo mật trong server backend.\n" +
-              "📋 Local Development Mode:\n" +
+            ? "Chào mừng bạn đến chatbot của công ty TST! 🤖\n\n" +
+              "🔒 Chúng tôi là Đại lý lớn nhất của SKF tại Việt Nam.\n" +
               "1. Chạy: python chatbot_server.py\n" +
               "2. Cấu hình API key trong file .env\n" +
               "3. Bắt đầu trò chuyện!\n\n" +

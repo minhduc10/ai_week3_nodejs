@@ -1,0 +1,8 @@
+Conversation started: 2025-09-07 16:14:30
+
+User: chào bạn
+Assistant: Chào bạn! Bạn đang làm việc trong ngành nào vậy?
+
+User: tôi làm trong ngành kinh doanh vòng bi
+Assistant: Cảm ơn bạn! Trong ngành kinh doanh vòng bi, bạn đang gặp những thách thức hay có mục tiêu gì cụ thể mà bạn muốn cải thiện không?
+
