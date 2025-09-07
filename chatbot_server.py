@@ -2,6 +2,8 @@
 import os
 from dotenv import load_dotenv
 import openai
+from flask import Flask, request, jsonify
+from flask_cors import CORS
 
 # Nạp các biến môi trường từ file .env
 load_dotenv()
@@ -76,8 +78,8 @@ def health():
 def handler(request):
     return app(request)
 
-# Export app for Vercel
-app = app
+# Export app for Vercel  
+# app = app  # This line is not needed
 
 if __name__ == '__main__':
     print("=" * 50)
